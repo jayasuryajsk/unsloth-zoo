@@ -258,10 +258,8 @@ class UnslothVisionDataCollator:
     pass
 
     def __call__(self, examples):
-        # [TODO] Support non image inputs as well
-        # The issue is batch = self.processor( forces tensors to be returned and not None.
-        texts  = []
-        images = []
+        texts = []
+        images_per_example = []
         
         if self.formatting_func is not None:
             examples = [self.formatting_func(example) for example in examples]
@@ -273,29 +271,31 @@ class UnslothVisionDataCollator:
                 tokenize = False,
                 add_generation_prompt = False,
             )
-            # Dataset with 2 columns messages / images
+            # Handle multiple images from dataset with "images" column
             if "images" in example:
-                image = example["images"][0]
+                images = example["images"] if isinstance(example["images"], list) else [example["images"]]
             else:
-                image, video = process_vision_info(messages)
-            texts .append(message)
-            images.append(image)
+                # Extract images from messages content
+                images, _ = process_vision_info(messages)
+                images = images if images else []  # Convert None to empty list
+            
+            texts.append(message)
+            images_per_example.append(images)
         pass
 
         # Tokenize the texts and process the images
         batch = self.processor(
-            text    = texts,
-            images  = images,
+            text = texts,
+            images = images_per_example,  # Pass list of lists to support multiple/no images per example
             padding = True,
-            # [TODO] Truncating to max_seq_length does NOT work for VLMs
-            # truncation = True,
             return_tensors = "pt",
         )
         batch.pop("token_type_ids", None)
         
-        # Pixtral accepts multiple images, so we have to cast it individually
+        # Handle pixel values conversion to proper dtype
         pixel_values = batch["pixel_values"]
         if type(pixel_values) is list:
+            # Handle nested lists for multiple images per example
             for j, pixel_value_j in enumerate(pixel_values):
                 if type(pixel_value_j) is list:
                     for k, pixel_value_k in enumerate(pixel_value_j):
@@ -305,6 +305,7 @@ class UnslothVisionDataCollator:
             pass
             batch["pixel_values"] = pixel_values
         else:
+            # Single image case
             batch["pixel_values"] = batch["pixel_values"].to(self.dtype)
         pass
 
